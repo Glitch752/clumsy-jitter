@@ -8,7 +8,7 @@
 #define JITTER_MIN "0"
 #define JITTER_MAX "2000"
 
-#define KEEP_AT_MOST 2000
+#define KEEP_AT_MOST 5000
 // send FLUSH_WHEN_FULL packets when buffer is full
 #define FLUSH_WHEN_FULL 800
 
