@@ -4,6 +4,8 @@
 # see <https://github.com/basil00/Divert/wiki/WinDivert-Documentation#7-filter-language> for details
 
 # loopback packets can only be filtered using 'outbound'.
+local udp: udp and loopback
+
 localhost ipv4 all: outbound and loopback
 localhost ipv4 tcp: tcp and outbound and loopback
 localhost ipv4 udp: udp and outbound and loopback

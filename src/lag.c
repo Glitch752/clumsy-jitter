@@ -2,20 +2,27 @@
 #include "iup.h"
 #include "common.h"
 #define NAME "lag"
+
 #define LAG_MIN "0"
 #define LAG_MAX "15000"
+#define JITTER_MIN "0"
+#define JITTER_MAX "2000"
+
 #define KEEP_AT_MOST 2000
 // send FLUSH_WHEN_FULL packets when buffer is full
 #define FLUSH_WHEN_FULL 800
+
 #define LAG_DEFAULT 50
+#define JITTER_DEFAULT 0
 
 // don't need a chance
-static Ihandle *inboundCheckbox, *outboundCheckbox, *timeInput;
+static Ihandle *inboundCheckbox, *outboundCheckbox, *timeInput, *jitterInput;
 
 static volatile short lagEnabled = 0,
     lagInbound = 1,
     lagOutbound = 1,
-    lagTime = LAG_DEFAULT; // default for 50ms
+    lagTime = LAG_DEFAULT,
+    lagJitter = JITTER_DEFAULT;
 
 static PacketNode lagHeadNode = {0}, lagTailNode = {0};
 static PacketNode *bufHead = &lagHeadNode, *bufTail = &lagTailNode;
@@ -34,7 +41,7 @@ static Ihandle *lagSetupUI() {
         IupLabel("Delay(ms):"),
         timeInput = IupText(NULL),
         NULL
-        );
+    );
 
     IupSetAttribute(timeInput, "VISIBLECOLUMNS", "4");
     IupSetAttribute(timeInput, "VALUE", STR(LAG_DEFAULT));
@@ -57,7 +64,26 @@ static Ihandle *lagSetupUI() {
         setFromParameter(timeInput, "VALUE", NAME"-time");
     }
 
-    return lagControlsBox;
+    // jitter input
+    Ihandle *jitterControlsBox = IupHbox(
+        IupLabel("Jitter(ms):"),
+        jitterInput = IupText(NULL),
+        NULL
+    );
+    IupSetAttribute(jitterInput, "VISIBLECOLUMNS", "4");
+    IupSetAttribute(jitterInput, "VALUE", STR(JITTER_DEFAULT));
+    IupSetCallback(jitterInput, "VALUECHANGED_CB", uiSyncInteger);
+    IupSetAttribute(jitterInput, SYNCED_VALUE, (char*)&lagJitter);
+    IupSetAttribute(jitterInput, INTEGER_MAX, JITTER_MAX);
+    IupSetAttribute(jitterInput, INTEGER_MIN, JITTER_MIN);
+
+    Ihandle *lagOuterBox = IupVbox(
+        lagControlsBox,
+        jitterControlsBox,
+        NULL
+    );
+
+    return lagOuterBox;
 }
 
 static void lagStartUp() {
@@ -89,7 +115,15 @@ static short lagProcess(PacketNode *head, PacketNode *tail) {
     // pick up all packets and fill in the current time
     while (bufSize < KEEP_AT_MOST && pac != head) {
         if (checkDirection(pac->addr.Outbound, lagInbound, lagOutbound)) {
-            insertAfter(popNode(pac), bufHead)->timestamp = timeGetTime();
+            PacketNode* inserted = insertAfter(popNode(pac), bufHead);
+            if(lagJitter == 0) {
+                // No jitter, just use lag time
+                inserted->timestamp = currentTime + lagTime;
+            } else {
+                int jitter = rand() % lagJitter; // jitter in range [0, lagJitter)
+                inserted->timestamp = timeGetTime() + lagTime + jitter;
+            }
+
             ++bufSize;
             pac = tail->prev;
         } else {
@@ -100,7 +134,7 @@ static short lagProcess(PacketNode *head, PacketNode *tail) {
     // try sending overdue packets from buffer tail
     while (!isBufEmpty()) {
         pac = bufTail->prev;
-        if (currentTime > pac->timestamp + lagTime) {
+        if (currentTime > pac->timestamp) {
             insertAfter(popNode(bufTail->prev), head); // sending queue is already empty by now
             --bufSize;
             LOG("Send lagged packets.");
